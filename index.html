@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0b6e4f">
+<meta name="description" content="My Assistant - তোমার ব্যক্তিগত AI সহকারী">
+<title>My Assistant</title>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<style>
+:root {
+  --green: #0b6e4f;
+  --dark: #1f2933;
+  --bg: #f2f6f4;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--dark);
+}
+
+header {
+  background: var(--green);
+  color: white;
+  padding: 18px;
+  text-align: center;
+}
+
+header h2 { margin: 0 0 5px; }
+header p { margin: 0; font-size: 13px; }
+
+main {
+  max-width: 650px;
+  margin: auto;
+  padding: 15px;
+}
+
+.status {
+  background: white;
+  border-radius: 10px;
+  padding: 12px;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+#chat {
+  background: white;
+  border-radius: 14px;
+  padding: 14px;
+  min-height: 260px;
+  max-height: 45vh;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+}
+
+.message {
+  padding: 10px 12px;
+  border-radius: 12px;
+  margin: 8px 0;
+  white-space: pre-wrap;
+}
+
+.user {
+  background: #dcefe7;
+  margin-left: 12%;
+}
+
+.assistant {
+  background: #f0f1f2;
+  margin-right: 12%;
+}
+
+input, button {
+  width: 100%;
+  padding: 13px;
+  border-radius: 10px;
+  font-size: 15px;
+  margin-top: 9px;
+}
+
+input {
+  border: 1px solid #ccd5d0;
+  background: white;
+}
+
+button {
+  border: none;
+  background: var(--green);
+  color: white;
+  cursor: pointer;
+}
+
+button.secondary {
+  background: white;
+  color: var(--green);
+  border: 1px solid var(--green);
+}
+
+button:disabled { opacity: .6; }
+
+.small {
+  font-size: 12px;
+  color: #59645e;
+  line-height: 1.6;
+}
+</style>
+</head>
+
+<body>
+
+<header>
+  <h2>My Assistant 🎙️</h2>
+  <p>তোমার ব্যক্তিগত সহকারী</p>
+</header>
+
+<main>
+
+  <div class="status" id="status">
+    Supabase ক্লায়েন্ট প্রস্তুত হচ্ছে...
+  </div>
+
+  <div id="chat" aria-live="polite">
+    <div class="message assistant">
+      হ্যালো! আমি তোমার Assistant-এর প্রাথমিক সংস্করণ।
+      আমাকে কোনো তথ্য মনে রাখতে বলতে পারো।
+    </div>
+  </div>
+
+  <input id="msg"
+         type="text"
+         placeholder="এখানে লিখে মেসেজ পাঠাও..."
+         autocomplete="off">
+
+  <button id="sendBtn" onclick="sendMessage()">
+    মেসেজ পাঠাও
+  </button>
+
+  <button class="secondary" onclick="startVoice()">
+    🎙️ কথা বলে মেসেজ দাও
+  </button>
+
+  <button class="secondary" onclick="showMemory()">
+    🧠 মনে রাখা তথ্য দেখো
+  </button>
+
+  <button class="secondary" onclick="testVoice()">
+    🔊 বাংলা কণ্ঠ পরীক্ষা
+  </button>
+
+  <button class="secondary" onclick="clearMemory()">
+    🗑️ সব সংরক্ষিত তথ্য মুছো
+  </button>
+
+  <p class="small">
+    নোট: এই সংস্করণে ব্যক্তিগত তথ্য এই ব্রাউজারের
+    Local Storage-এ রাখা হয়। Supabase ক্লায়েন্ট
+    সেটআপ করা আছে, কিন্তু ক্লাউডে তথ্য সংরক্ষণ,
+    প্রকৃত AI উত্তর এবং রিমাইন্ডার এখনো যুক্ত করা হয়নি।
+  </p>
+
+</main>
+
+<script>
+"use strict";
+
+/* SUPABASE CONFIGURATION */
+const SUPABASE_URL =
+  "https://wftlnzhyvbhmhemqvryh.supabase.co";
+
+const SUPABASE_KEY =
+  "sb_publishable_kKya52PtdbcqZIB1kvvHGg_vTc4CeNK";
+
+let supabaseClient = null;
+
+try {
+  if (window.supabase) {
+    supabaseClient = window.supabase.createClient(
+      SUPABASE_URL,
+      SUPABASE_KEY
+    );
+
+    document.getElementById("status").textContent =
+      "Supabase ক্লায়েন্ট তৈরি হয়েছে।";
+  } else {
+    document.getElementById("status").textContent =
+      "Supabase লাইব্রেরি লোড হয়নি। ইন্টারনেট পরীক্ষা করো।";
+  }
+} catch (error) {
+  document.getElementById("status").textContent =
+    "Supabase সেটআপে সমস্যা হয়েছে। URL ও Key পরীক্ষা করো।";
+}
+
+/* LOCAL MEMORY */
+const MEMORY_KEY = "my_assistant_memory_v1";
+
+function getMemory() {
+  try {
+    const value = JSON.parse(
+      localStorage.getItem(MEMORY_KEY) || "[]"
+    );
+    return Array.isArray(value) ? value : [];
+  } catch {
+    return [];
+  }
+}
+
+function addMemory(text) {
+  const list = getMemory();
+  list.push({
+    text: text,
+    date: new Date().toISOString()
+  });
+
+  localStorage.setItem(
+    MEMORY_KEY,
+    JSON.stringify(list)
+  );
+}
+
+/* CHAT DISPLAY */
+function addMessage(who, text) {
+  const chat = document.getElementById("chat");
+  const div = document.createElement("div");
+
+  div.className = "message " +
+    (who === "তুমি" ? "user" : "assistant");
+
+  div.textContent = who + ": " + text;
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+/* VOICE OUTPUT */
+function speak(text) {
+  if (!("speechSynthesis" in window)) return;
+
+  window.speechSynthesis.cancel();
+
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = "bn-BD";
+  utterance.rate = 0.92;
+  utterance.pitch = 1.08;
+
+  const voices = window.speechSynthesis.getVoices();
+
+  const banglaVoice = voices.find(v =>
+    /^bn([-_]|$)/i.test(v.lang)
+  );
+
+  if (banglaVoice) {
+    utterance.voice = banglaVoice;
+  }
+
+  window.speechSynthesis.speak(utterance);
+}
+
+function testVoice() {
+  speak("হ্যালো! আমি তোমার ব্যক্তিগত অ্যাসিস্ট্যান্ট।");
+}
+
+/* BASIC MESSAGE HANDLING */
+function getReply(text) {
+  const lower = text.toLowerCase();
+
+  if (text.startsWith("মনে রাখো ")) {
+    const item = text.slice("মনে রাখো ".length).trim();
+
+    if (!item) {
+      return "কী তথ্য মনে রাখতে হবে, সেটি লিখে দাও।";
+    }
+
+    addMemory(item);
+    return "তথ্যটি এই ব্রাউজারে সংরক্ষণ করেছি।";
+  }
+
+  if (
+    lower.includes("আমার মনে রাখা তথ্য") ||
+    lower.includes("আমার তথ্য")
+  ) {
+    const list = getMemory();
+
+    if (!list.length) {
+      return "এখনো কোনো তথ্য মনে রাখা হয়নি।";
+    }
+
+    return "তোমার সংরক্ষিত তথ্য: " +
+      list.map((item, i) =>
+        (i + 1) + ". " + item.text
+      ).join("। ");
+  }
+
+  if (text.includes("আমার নাম")) {
+    const list = getMemory();
+    const name = list.find(item =>
+      item.text.startsWith("আমার নাম ")
+    );
+
+    return name
+      ? "তুমি আগে বলেছিলে, " + name.text
+      : "তোমার নাম এখনো আমাকে জানাওনি।";
+  }
+
+  if (/হ্যালো|হাই|আসসালামু আলাইকুম/.test(text)) {
+    return "হ্যালো! বলো, কীভাবে সাহায্য করতে পারি?";
+  }
+
+  return "তোমার কথাটি পেয়েছি। এই সংস্করণে উন্নত AI যুক্ত করা হয়নি। প্রকৃত AI উত্তর পেতে নিরাপদ AI সংযোগ যোগ করতে হবে।";
+}
+
+/* SEND MESSAGE */
+function sendMessage() {
+  const input = document.getElementById("msg");
+  const text = input.value.trim();
+
+  if (!text) return;
+
+  addMessage("তুমি", text);
+  input.value = "";
+
+  try {
+    const reply = getReply(text);
+    addMessage("Assistant", reply);
+    speak(reply);
+  } catch (error) {
+    addMessage(
+      "Assistant",
+      "সমস্যা হয়েছে। আবার চেষ্টা করো।"
+    );
+  }
+}
+
+document.getElementById("msg").addEventListener(
+  "keydown",
+  event => {
+    if (event.key === "Enter") {
+      sendMessage();
+    }
+  }
+);
+
+/* VOICE INPUT */
+function startVoice() {
+  const SpeechRecognition =
+    window.SpeechRecognition ||
+    window.webkitSpeechRecognition;
+
+  if (!SpeechRecognition) {
+    alert(
+      "এই ব্রাউজারে Voice Input নেই। সমর্থিত ব্রাউজারে চেষ্টা করো।"
+    );
+    return;
+  }
+
+  const recognition = new SpeechRecognition();
+  recognition.lang = "bn-BD";
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
+
+  recognition.onresult = event => {
+    document.getElementById("msg").value =
+      event.results[0][0].transcript;
+
+    sendMessage();
+  };
+
+  recognition.onerror = () => {
+    alert(
+      "কথা শনাক্ত করা যায়নি। মাইক্রোফোনের অনুমতি ও ইন্টারনেট পরীক্ষা করো।"
+    );
+  };
+
+  try {
+    recognition.start();
+  } catch {
+    alert("ভয়েস চালু করা যায়নি। আবার চেষ্টা করো।");
+  }
+}
+
+/* SHOW MEMORY */
+function showMemory() {
+  const list = getMemory();
+
+  if (!list.length) {
+    addMessage(
+      "Assistant",
+      "এখনো কোনো তথ্য সংরক্ষণ করা হয়নি।"
+    );
+    return;
+  }
+
+  const answer = list.map((item, i) =>
+    (i + 1) + ". " + item.text
+  ).join("\n");
+
+  addMessage("Assistant", answer);
+  speak("তোমার সংরক্ষিত তথ্য দেখানো হয়েছে।");
+}
+
+/* CLEAR MEMORY */
+function clearMemory() {
+  const confirmed = confirm(
+    "তুমি কি এই ব্রাউজারে সংরক্ষিত সব ব্যক্তিগত তথ্য মুছতে চাও?"
+  );
+
+  if (!confirmed) return;
+
+  localStorage.removeItem(MEMORY_KEY);
+
+  addMessage(
+    "Assistant",
+    "এই ব্রাউজারে সংরক্ষিত তথ্য মুছে ফেলা হয়েছে।"
+  );
+}
+</script>
+
+</body>
+</html>
