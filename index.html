@@ -315,6 +315,7 @@ function getReply(text) {
 
 /* SEND MESSAGE */
 function sendMessage() {
+  async function sendMessage() {
   const input = document.getElementById("msg");
   const text = input.value.trim();
 
@@ -324,18 +325,40 @@ function sendMessage() {
   input.value = "";
 
   try {
-    const reply = getReply(text);
+    const response = await fetch(
+      "https://wftlnzhyvbhmhemqvryh.supabase.co/functions/v1/amar-ai",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "apikey": "sb_publishable_kKya52PtdbcqZIB1kvvHGg_vTc4CeNK"
+        },
+        body: JSON.stringify({
+          message: text
+        })
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error || "AI উত্তর দিতে পারেনি");
+    }
+
+    const reply = data.answer;
     addMessage("Assistant", reply);
     speak(reply);
+
   } catch (error) {
+    console.error("AI error:", error);
     addMessage(
       "Assistant",
-      "সমস্যা হয়েছে। আবার চেষ্টা করো।"
+      "দুঃখিত, AI-এর সঙ্গে সংযোগ করা যায়নি। আবার চেষ্টা করো।"
     );
   }
-}
-
-document.getElementById("msg").addEventListener(
+  }
+  
+  .gocument.getElementById("msg").addEventListener(
   "keydown",
   event => {
     if (event.key === "Enter") {
