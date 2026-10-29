@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0a0e13">
+<title>My Assistant</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<style>
+:root {
+  --bg:#0a0e13;
+  --surface:#111820;
+  --line:#1f2a36;
+  --text:#e6edf3;
+  --muted:#8b98a7;
+  --blue:#2563eb;
+  --blue-dark:#1d4ed8;
+  --bubble:#1a232e;
+}
+* { box-sizing:border-box; }
+html, body { height:100%; }
+body {
+  margin:0; display:flex; flex-direction:column;
+  font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
+  background:var(--bg); color:var(--text);
+}
+header {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:14px 16px; border-bottom:1px solid var(--line); background:var(--surface);
+  position:relative;
+}
+header h2 { margin:0; font-size:18px; font-weight:600; letter-spacing:.2px; }
+#menuBtn {
+  width:40px; height:40px; border-radius:10px; border:1px solid var(--line);
+  background:transparent; color:var(--text); font-size:22px; line-height:1; cursor:pointer;
+}
+#menu {
+  display:none; position:absolute; right:12px; top:58px; z-index:10; min-width:190px;
+  background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:6px;
+  box-shadow:0 10px 30px rgba(0,0,0,.5);
+}
+#menu.open { display:block; }
+#menu button {
+  display:block; width:100%; text-align:left; padding:12px; border:none; border-radius:8px;
+  background:transparent; color:var(--text); font-size:14px; font-family:inherit; cursor:pointer;
+}
+#menu button:hover { background:var(--bubble); }
+#menu button.danger { color:#f87171; }
+main { flex:1; display:flex; flex-direction:column; max-width:680px; width:100%; margin:0 auto; padding:14px; min-height:0; }
+#chat { flex:1; overflow-y:auto; overflow-wrap:anywhere; padding:4px 2px; }
+.message { max-width:86%; padding:10px 13px; border-radius:14px; margin:9px 0; white-space:pre-wrap; line-height:1.55; font-size:15px; }
+.message .who { display:block; font-size:12px; margin-bottom:3px; opacity:.75; }
+.user { background:var(--blue); color:#fff; margin-left:auto; border-bottom-right-radius:4px; }
+.assistant { background:var(--bubble); color:var(--text); margin-right:auto; border-bottom-left-radius:4px; }
+.composer { padding-top:10px; }
+input {
+  width:100%; padding:14px; border-radius:12px; font-size:15px; font-family:inherit;
+  border:1px solid var(--line); background:var(--surface); color:var(--text); outline:none;
+}
+input:focus { border-color:var(--blue); }
+input::placeholder { color:var(--muted); }
+.row { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px; }
+.row button {
+  padding:13px; border-radius:12px; font-size:15px; font-family:inherit; cursor:pointer; border:none;
+}
+#sendBtn { background:var(--blue); color:#fff; }
+#sendBtn:hover { background:var(--blue-dark); }
+#voiceBtn { background:transparent; color:var(--text); border:1px solid var(--line); }
+button:disabled { opacity:.55; }
+</style>
+</head>
+<body>
+
+<header>
+  <h2>My Assistant</h2>
+  <button id="menuBtn" type="button" aria-label="মেনু">⋮</button>
+  <div id="menu">
+    <button type="button" id="memBtn">স্মৃতি দেখুন</button>
+    <button type="button" id="ttsBtn">কণ্ঠ পরীক্ষা</button>
+    <button type="button" id="clearBtn" class="danger">সব স্মৃতি মুছুন</button>
+  </div>
+</header>
+
+<main>
+  <div id="chat" aria-live="polite">
+    <div class="message assistant"><span class="who">আধিবা</span>হ্যালো! আমি আধিবা, তোমার ব্যক্তিগত সহকারী। কিছু মনে রাখাতে চাইলে লেখো: "মনে রাখো ..."</div>
+  </div>
+
+  <div class="composer">
+    <input id="msg" type="text" placeholder="মেসেজ লেখো..." autocomplete="off">
+    <div class="row">
+      <button id="sendBtn" type="button">পাঠান</button>
+      <button id="voiceBtn" type="button">ভয়েস</button>
+    </div>
+  </div>
+</main>
+
+<script>
+"use strict";
+
+const SUPABASE_URL = "https://wftlnzhyvbhmhemqvryh.supabase.co";
+const SUPABASE_KEY = "sb_publishable_kKya52PtdbcqZIB1kvvHGg_vTc4CeNK";
+const FUNCTION_NAME = "clever-api";
+const LOCAL_KEY = "my_assistant_memory_v2";
+const BOT = "আধিবা";
+const ME = "আমি";
+
+const $ = id => document.getElementById(id);
+let db = null;
+
+try {
+  if (window.supabase) db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+} catch (e) { console.error("Supabase:", e); }
+
+/* ---------- Chat UI ---------- */
+function addMessage(who, text) {
+  const div = document.createElement("div");
+  div.className = "message " + (who === ME ? "user" : "assistant");
+  const label = document.createElement("span");
+  label.className = "who";
+  label.textContent = who;
+  div.appendChild(label);
+  div.appendChild(document.createTextNode(text));
+  $("chat").appendChild(div);
+  $("chat").scrollTop = $("chat").scrollHeight;
+}
+
+/* ---------- Menu ---------- */
+$("menuBtn").addEventListener("click", e => {
+  e.stopPropagation();
+  $("menu").classList.toggle("open");
+});
+document.addEventListener("click", () => $("menu").classList.remove("open"));
+
+/* ---------- Memory ---------- */
+function localGet() {
+  try {
+    const v = JSON.parse(localStorage.getItem(LOCAL_KEY) || "[]");
+    return Array.isArray(v) ? v : [];
+  } catch { return []; }
+}
+function localSet(list) {
+  try { localStorage.setItem(LOCAL_KEY, JSON.stringify(list)); } catch {}
+}
+
+async function saveMemory(text) {
+  if (db) {
+    const { error } = await db.from("memories").insert({ text });
+    if (!error) return "cloud";
+    console.error("memories insert:", error);
+  }
+  const list = localGet();
+  list.push({ text, created_at: new Date().toISOString() });
+  localSet(list);
+  return "local";
+}
+
+async function loadMemories() {
+  if (db) {
+    const { data, error } = await db
+      .from("memories").select("text,created_at")
+      .order("created_at", { ascending: true }).limit(200);
+    if (!error && data) return data;
+    console.error("memories select:", error);
+  }
+  return localGet();
+}
+
+async function showMemory() {
+  const list = await loadMemories();
+  if (!list.length) { addMessage(BOT, "এখনো কোনো তথ্য সংরক্ষণ করা হয়নি।"); return; }
+  addMessage(BOT, list.map((m, i) => (i + 1) + ". " + m.text).join("\n"));
+}
+
+async function clearMemory() {
+  if (!confirm("সব সংরক্ষিত স্মৃতি মুছে ফেলবে?")) return;
+  localStorage.removeItem(LOCAL_KEY);
+  if (db) {
+    const { error } = await db.from("memories").delete().not("id", "is", null);
+    if (error) console.error("memories delete:", error);
+  }
+  addMessage(BOT, "স্মৃতি মুছে ফেলা হয়েছে।");
+}
+
+/* ---------- Voice output (soft, magical girl voice) ---------- */
+let voices = [];
+function loadVoices() {
+  if ("speechSynthesis" in window) voices = window.speechSynthesis.getVoices();
+}
+loadVoices();
+if ("speechSynthesis" in window) window.speechSynthesis.onvoiceschanged = loadVoices;
+
+function pickVoice() {
+  const bn = voices.filter(v => /^bn([-_]|$)/i.test(v.lang));
+  const female = bn.find(v => /female|woman|girl|নারী|মহিলা/i.test(v.name));
+  return female || bn[0] || null;
+}
+
+function speak(text) {
+  if (!("speechSynthesis" in window)) return;
+  window.speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = "bn-BD";
+  u.rate = 0.9;
+  u.pitch = 1.45;
+  const v = pickVoice();
+  if (v) u.voice = v;
+  window.speechSynthesis.speak(u);
+}
+
+/* ---------- Send ---------- */
+let busy = false;
+
+async function sendMessage() {
+  if (busy) return;
+  const text = $("msg").value.trim();
+  if (!text) return;
+
+  addMessage(ME, text);
+  $("msg").value = "";
+  busy = true;
+  $("sendBtn").disabled = true;
+
+  try {
+    if (text.startsWith("মনে রাখো")) {
+      const item = text.replace(/^মনে রাখো[\s:,-]*/, "").trim();
+      if (!item) {
+        addMessage(BOT, "কী মনে রাখতে হবে, সেটি লিখে দাও।");
+      } else {
+        const where = await saveMemory(item);
+        addMessage(BOT, where === "cloud" ? "মনে রাখলাম।" : "মনে রাখলাম, তবে শুধু এই ব্রাউজারে।");
+        speak("মনে রাখলাম।");
+      }
+      return;
+    }
+
+    const memories = (await loadMemories()).map(m => m.text);
+
+    const response = await fetch(SUPABASE_URL + "/functions/v1/" + FUNCTION_NAME, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "apikey": SUPABASE_KEY,
+        "Authorization": "Bearer " + SUPABASE_KEY
+      },
+      body: JSON.stringify({ message: text, memories })
+    });
+
+    let data = {};
+    try { data = await response.json(); } catch {}
+    if (!response.ok) throw new Error(data.error || ("HTTP " + response.status));
+
+    const reply = data.answer || "উত্তর পাইনি।";
+    addMessage(BOT, reply);
+    speak(reply);
+  } catch (err) {
+    console.error("AI error:", err);
+    addMessage(BOT, "দুঃখিত, সংযোগ করা যায়নি।\nকারণ: " + err.message);
+  } finally {
+    busy = false;
+    $("sendBtn").disabled = false;
+  }
+}
+
+/* ---------- Voice input ---------- */
+function startVoice() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { alert("এই ব্রাউজারে Voice Input নেই। Chrome ব্যবহার করো।"); return; }
+  const rec = new SR();
+  rec.lang = "bn-BD";
+  rec.interimResults = false;
+  rec.maxAlternatives = 1;
+  rec.onresult = e => { $("msg").value = e.results[0][0].transcript; sendMessage(); };
+  rec.onerror = () => alert("কথা শনাক্ত করা যায়নি। মাইক্রোফোনের অনুমতি ও ইন্টারনেট পরীক্ষা করো।");
+  try { rec.start(); } catch { alert("ভয়েস চালু করা যায়নি। আবার চেষ্টা করো।"); }
+}
+
+/* ---------- Wire up ---------- */
+$("sendBtn").addEventListener("click", sendMessage);
+$("voiceBtn").addEventListener("click", startVoice);
+$("memBtn").addEventListener("click", showMemory);
+$("clearBtn").addEventListener("click", clearMemory);
+$("ttsBtn").addEventListener("click", () => speak("হ্যালো! আমি আধিবা, তোমার ব্যক্তিগত সহকারী।"));
+$("msg").addEventListener("keydown", e => { if (e.key === "Enter") sendMessage(); });
+</script>
+</body>
+  </html>
