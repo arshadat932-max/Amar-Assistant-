@@ -5,6 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0a0d14">
 <title>Adhiba</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Adhiba">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <style>
 :root{--bg:#0a0d14;--panel:#111722;--line:#1f2937;--text:#e6edf6;--muted:#8b98a9;--accent:#4f8cff;--me:#a8d1ff;--meText:#0b1b33}
@@ -391,6 +398,7 @@ $("msg").addEventListener("keydown", e => { if (e.key === "Enter") send(); });
 $("histClose").addEventListener("click", closeHist);
 $("histNew").addEventListener("click", newChat);
 if ("speechSynthesis" in window) window.speechSynthesis.getVoices();
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 setVoiceLabel();
 
 (async function init() {
