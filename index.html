@@ -30,7 +30,12 @@ header p{margin:2px 0 0;font-size:12px;color:var(--muted)}
 .msg .who{font-size:12px;font-weight:700;margin-bottom:3px;opacity:.75}
 .msg.me{background:var(--me);color:var(--meText);margin-left:auto;border-bottom-right-radius:4px}
 .msg.ai{background:var(--panel);border:1px solid var(--line);margin-right:auto;border-bottom-left-radius:4px}
-.msg .del{display:block;margin-top:6px;border:0;background:transparent;color:inherit;opacity:.5;font-size:11px;padding:0;cursor:pointer}
+.acts{display:flex;gap:14px;align-items:center;margin-top:6px}
+.spk{width:22px;height:22px;padding:0;border:0;background:transparent;color:var(--accent);cursor:pointer;display:grid;place-items:center}
+.spk svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.spk.loading{opacity:.4;animation:p 1s infinite}
+@keyframes p{50%{opacity:1}}
+.msg .del{display:block;margin-top:0;border:0;background:transparent;color:inherit;opacity:.5;font-size:11px;padding:0;cursor:pointer}
 .note{background:transparent;border:1px dashed var(--line);color:var(--muted);border-radius:12px;padding:10px 12px;margin:10px 0;font-size:14px;white-space:pre-wrap}
 .bar{display:flex;gap:8px;align-items:center;padding:10px 12px;padding-bottom:calc(10px + env(safe-area-inset-bottom,0px));background:var(--panel);border-top:1px solid var(--line)}
 .bar input{flex:1;min-width:0;height:42px;border-radius:21px;border:1px solid var(--line);background:var(--bg);color:var(--text);padding:0 16px;font-size:15px;font-family:inherit;outline:none}
@@ -69,7 +74,6 @@ header p{margin:2px 0 0;font-size:12px;color:var(--muted)}
   <button type="button" data-act="new">নতুন চ্যাট</button>
   <button type="button" data-act="hist">ইতিহাস</button>
   <button type="button" data-act="mem">স্মৃতি দেখো</button>
-  <button type="button" data-act="voice" id="voiceItem">কণ্ঠ: চালু</button>
   <button type="button" data-act="tts">কণ্ঠ পরীক্ষা</button>
   <button type="button" data-act="clearMem" class="danger">সব স্মৃতি মুছো</button>
   <button type="button" data-act="clearAll" class="danger">সব ইতিহাস মুছো</button>
@@ -104,7 +108,7 @@ header p{margin:2px 0 0;font-size:12px;color:var(--muted)}
 const SUPABASE_URL = "https://wftlnzhyvbhmhemqvryh.supabase.co";
 const SUPABASE_KEY = "sb_publishable_kKya52PtdbcqZIB1kvvHGg_vTc4CeNK";
 const FN_URL = SUPABASE_URL + "/functions/v1/clever-api";
-const LS_MSGS = "adhiba_msgs_v1", LS_CHAT = "adhiba_chat_v1", LS_MEM = "adhiba_mem_v1", LS_VOICE = "adhiba_voice_v1";
+const LS_MSGS = "adhiba_msgs_v1", LS_CHAT = "adhiba_chat_v1", LS_MEM = "adhiba_mem_v1";
 
 const $ = id => document.getElementById(id);
 const ls = {
@@ -121,7 +125,6 @@ let chatId = ls.get(LS_CHAT, null) || newId();
 ls.set(LS_CHAT, chatId);
 let current = [];
 let busy = false;
-let voiceOn = ls.get(LS_VOICE, true);
 
 /* ---------- Storage: messages ---------- */
 async function insertMsg(role, content) {
@@ -224,7 +227,15 @@ function bubble(m) {
     current = current.filter(c => c.id !== m.id);
     d.remove();
   };
-  d.append(who, t, x);
+  const acts = document.createElement("div"); acts.className = "acts";
+  if (m.role !== "user") {
+    const sp = document.createElement("button"); sp.type = "button"; sp.className = "spk"; sp.setAttribute("aria-label", "শুনুন");
+    sp.innerHTML = '<svg viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4zM15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg>';
+    sp.onclick = () => playVoice(m.id, m.content, sp);
+    acts.append(sp);
+  }
+  acts.append(x);
+  d.append(who, t, acts);
   $("chat").appendChild(d); scrollDown();
 }
 
@@ -238,28 +249,54 @@ function renderChat() {
   }
 }
 
-/* ---------- Voice output ---------- */
-function pickVoice() {
-  const vs = window.speechSynthesis.getVoices();
-  const bn = vs.filter(v => /^bn([-_]|$)/i.test(v.lang));
-  return bn.find(v => /female|nabanita|tanishaa|google/i.test(v.name)) || bn[0] || null;
+/* ---------- Voice output (Gemini TTS, tap to play) ---------- */
+let audioEl = null;
+const audioCache = new Map();
+
+function pcmToWavUrl(b64) {
+  const bin = atob(b64), n = bin.length;
+  const buf = new ArrayBuffer(44 + n), v = new DataView(buf);
+  const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  w(0, "RIFF"); v.setUint32(4, 36 + n, true); w(8, "WAVE"); w(12, "fmt ");
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, 24000, true); v.setUint32(28, 48000, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  w(36, "data"); v.setUint32(40, n, true);
+  const u8 = new Uint8Array(buf);
+  for (let i = 0; i < n; i++) u8[44 + i] = bin.charCodeAt(i);
+  return URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
 }
 
-function speak(text) {
-  if (!voiceOn || !("speechSynthesis" in window)) return;
-  window.speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(text);
-  u.lang = "bn-BD";
-  u.rate = 0.93;
-  u.pitch = 1.35;
-  const v = pickVoice(); if (v) u.voice = v;
-  window.speechSynthesis.speak(u);
+async function playVoice(key, text, btn) {
+  if (audioEl) { audioEl.pause(); audioEl = null; }
+  btn.classList.add("loading");
+  try {
+    let url = audioCache.get(key);
+    if (!url) {
+      const res = await fetch(FN_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "apikey": SUPABASE_KEY, "Authorization": "Bearer " + SUPABASE_KEY },
+        body: JSON.stringify({ tts: true, text })
+      });
+      let data = {};
+      try { data = await res.json(); } catch {}
+      if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+      url = pcmToWavUrl(data.audio);
+      audioCache.set(key, url);
+    }
+    audioEl = new Audio(url);
+    await audioEl.play();
+  } catch (e) {
+    note("কণ্ঠ চালানো যায়নি।\nকারণ: " + e.message);
+  } finally {
+    btn.classList.remove("loading");
+  }
 }
 
 /* ---------- Send ---------- */
 async function reply(text) {
+  text = text.replace(/অনিক ভাই(?![\u09AF\u09DF])/g, "অনিক ভাইয়া");
   const am = await insertMsg("assistant", text);
-  current.push(am); bubble(am); speak(text);
+  current.push(am); bubble(am);
 }
 
 async function send() {
@@ -368,7 +405,6 @@ async function openHist() {
 }
 
 /* ---------- Menu ---------- */
-function setVoiceLabel() { $("voiceItem").textContent = "কণ্ঠ: " + (voiceOn ? "চালু" : "বন্ধ"); }
 
 $("menuBtn").addEventListener("click", e => { e.stopPropagation(); $("menu").classList.toggle("open"); });
 document.addEventListener("click", () => $("menu").classList.remove("open"));
@@ -383,8 +419,7 @@ $("menu").addEventListener("click", async e => {
     const l = await getMems();
     note(l.length ? "স্মৃতি:\n" + l.map((m, i) => (i + 1) + ". " + m.text).join("\n") : "এখনো কোনো স্মৃতি নেই।");
   }
-  else if (act === "voice") { voiceOn = !voiceOn; ls.set(LS_VOICE, voiceOn); setVoiceLabel(); }
-  else if (act === "tts") { const was = voiceOn; voiceOn = true; speak("হ্যালো! আমি আধিবা, তোমার ব্যক্তিগত সহকারী।"); voiceOn = was; }
+  else if (act === "tts") { playVoice("test", "হ্যালো! আমি আধিবা, তোমার ব্যক্তিগত সহকারী।", document.createElement("button")); }
   else if (act === "clearMem") { if (confirm("সব স্মৃতি মুছে ফেলবে?")) { await clearMems(); note("স্মৃতি মুছে ফেলা হয়েছে।"); } }
   else if (act === "clearAll") {
     if (confirm("সব চ্যাটের ইতিহাস মুছে ফেলবে?")) { await deleteAllChats(); chatId = newId(); ls.set(LS_CHAT, chatId); current = []; renderChat(); }
@@ -397,9 +432,7 @@ $("micBtn").addEventListener("click", startVoice);
 $("msg").addEventListener("keydown", e => { if (e.key === "Enter") send(); });
 $("histClose").addEventListener("click", closeHist);
 $("histNew").addEventListener("click", newChat);
-if ("speechSynthesis" in window) window.speechSynthesis.getVoices();
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
-setVoiceLabel();
 
 (async function init() {
   current = await getMsgs(chatId);
