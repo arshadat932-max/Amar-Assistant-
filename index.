@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="bn">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Amar Assistant</title>
+  <style>
+    *{box-sizing:border-box}
+    body{margin:0;background:#f3f6f5;color:#1f2933;font-family:Arial,sans-serif}
+    .app{max-width:720px;margin:auto;min-height:100vh;display:flex;flex-direction:column}
+    header{background:#0b6e4f;color:white;padding:18px}
+    header h1{margin:0;font-size:22px}
+    header p{margin:6px 0 0;font-size:14px}
+    #chat{flex:1;padding:16px;overflow:auto}
+    .msg{padding:12px 14px;margin:10px 0;border-radius:14px;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.5}
+    .user{background:#dcefe8;margin-left:35px}
+    .assistant{background:white;margin-right:35px;border:1px solid #e2e8e5}
+    .bar{background:white;padding:12px;border-top:1px solid #ddd;position:sticky;bottom:0}
+    textarea{width:100%;resize:vertical;min-height:65px;padding:12px;border:1px solid #ccd5d1;border-radius:10px;font:inherit}
+    button{border:0;border-radius:9px;padding:11px 14px;background:#0b6e4f;color:white;font-size:15px;cursor:pointer}
+    button.secondary{background:#e6eeeb;color:#1f2933}
+    button:disabled{opacity:.5}
+    .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:9px}
+    #fileName{font-size:13px;margin-top:7px;color:#52615b}
+    .small{font-size:12px;color:#64716b;margin-top:8px}
+    .reminder{background:white;border:1px solid #dce4e0;padding:10px;border-radius:10px;margin:8px 0}
+    .reminder button{margin-left:8px;padding:6px 9px}
+  </style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>Amar Assistant</h1>
+    <p>বাংলায় প্রশ্ন করো—লিখে, ছবি দিয়ে বা ভিডিও দিয়ে।</p>
+  </header>
+
+  <main id="chat" aria-live="polite">
+    <div class="msg assistant">স্বাগতম! কীভাবে সাহায্য করতে পারি?</div>
+  </main>
+
+  <section class="bar">
+    <textarea id="question" placeholder="এখানে প্রশ্ন লেখো…"></textarea>
+    <input id="mediaInput" type="file" accept="image/*,video/*" hidden>
+    <div id="fileName"></div>
+    <div class="actions">
+      <button id="mediaButton" class="secondary" type="button">ছবি/ভিডিও বাছাই</button>
+      <button id="sendButton" type="button">পাঠাও</button>
+      <button id="voiceButton" class="secondary" type="button">কণ্ঠে বলো</button>
+      <button id="stopVoiceButton" class="secondary" type="button">কণ্ঠ বন্ধ</button>
+    </div>
+    <div class="small">ছবি/ভিডিও আপলোডের সর্বোচ্চ সীমা ১৫ MB। স্মরণিকা এই ডিভাইসের ব্রাউজারে রাখা হয়।</div>
+  </section>
+
+  <section style="padding:16px">
+    <h3>স্মরণিকা</h3>
+    <input id="reminderText" placeholder="কী মনে করিয়ে দিতে হবে?" style="width:100%;padding:10px;border:1px solid #ccd5d1;border-radius:8px">
+    <input id="reminderTime" type="datetime-local" style="width:100%;padding:10px;margin-top:8px;border:1px solid #ccd5d1;border-radius:8px">
+    <button id="addReminder" style="margin-top:8px">স্মরণিকা যোগ করো</button>
+    <div id="reminders"></div>
+  </section>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  // নিজের Supabase Project URL ও anon/public key বসাও
+  const SUPABASE_URL = "YOUR_SUPABASE_URL";
+  const SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY";
+
+  const supabaseClient = window.supabase.createClient(
+    SUPABASE_URL,
+    SUPABASE_ANON_KEY
+  );
+
+  const chat = document.getElementById("chat");
+  const question = document.getElementById("question");
+  const mediaInput = document.getElementById("mediaInput");
+  const fileName = document.getElementById("fileName");
+  const sendButton = document.getElementById("sendButton");
+
+  let selectedMedia = null;
+
+  function addMessage(text, who) {
+    const div = document.createElement("div");
+    div.className = "msg " + who;
+    div.textContent = text;
+    chat.appendChild(div);
+    chat.scrollTop = chat.scrollHeight;
+    return div;
+  }
+
+  document.getElementById("mediaButton").addEventListener("click", () => {
+    mediaInput.click();
+  });
+
+  mediaInput.addEventListener("change", async () => {
+    const file = mediaInput.files && mediaInput.files[0];
+    if (!file) return;
+
+    if (!file.type.startsWith("image/") && !file.type.startsWith("video/")) {
+      alert("শুধু ছবি অথবা ভিডিও নির্বাচন করো।");
+      mediaInput.value = "";
+      return;
+    }
+
+    if (file.size > 15 * 1024 * 1024) {
+      alert("ফাইলটি ১৫ MB-এর বেশি। ছোট ফাইল নির্বাচন করো।");
+      mediaInput.value = "";
+      return;
+    }
+
+    try {
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+
+      selectedMedia = {
+        mimeType: file.type,
+        data: String(dataUrl).split(",")[1],
+        name: file.name
+      };
+      fileName.textContent = "নির্বাচিত: " + file.name;
+    } catch (error) {
+      alert("ফাইলটি পড়া যায়নি। আবার চেষ্টা করো।");
+    }
+  });
+
+  async function sendMessage() {
+    const text = question.value.trim();
+
+    if (!text && !selectedMedia) {
+      alert("প্রশ্ন লেখো অথবা ছবি/ভিডিও বেছে নাও।");
+      return;
+    }
+
+    addMessage(
+      text + (selectedMedia ? "\n[ফাইল: " + selectedMedia.name + "]" : ""),
+      "user"
+    );
+
+    question.value = "";
+    sendButton.disabled = true;
+    const waiting = addMessage("উত্তর তৈরি হচ্ছে…", "assistant");
+
+    try {
+      const { data, error } = await supabaseClient.functions.invoke(
+        "amar-assistant",
+        {
+          body: {
+            message: text,
+            media: selectedMedia
+          }
+        }
+      );
+
+      if (error) throw error;
+
+      waiting.textContent = data?.answer || "উত্তর পাওয়া যায়নি।";
+      speak(waiting.textContent);
+    } catch (error) {
+      waiting.textContent =
+        "উত্তর পাওয়া যায়নি। ইন্টারনেট, Supabase URL/Key এবং Function-এর সেটিং পরীক্ষা করো।";
+      console.error(error);
+    } finally {
+      selectedMedia = null;
+      mediaInput.value = "";
+      fileName.textContent = "";
+      sendButton.disabled = false;
+    }
+  }
+
+  sendButton.addEventListener("click", sendMessage);
+
+  question.addEventListener("keydown", event => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      sendMessage();
+    }
+  });
+
+  function speak(text) {
+    if (!("speechSynthesis" in window) || !text) return;
+
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "bn-BD";
+
+    const voices = window.speechSynthesis.getVoices();
+    const bengaliVoice = voices.find(v => v.lang.toLowerCase().startsWith("bn"));
+    if (bengaliVoice) utterance.voice = bengaliVoice;
+
+    window.speechSynthesis.speak(utterance);
+  }
+
+  document.getElementById("voiceButton").addEventListener("click", () => {
+    const SpeechRecognition =
+      window.SpeechRecognition || window.webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
+      alert("এই ব্রাউজারে কণ্ঠে লেখার সুবিধা নেই। Chrome-এ চেষ্টা করো।");
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = "bn-BD";
+    recognition.onresult = event => {
+      question.value += event.results[0][0].transcript;
+    };
+    recognition.onerror = () => alert("কণ্ঠ শোনা যায়নি। আবার চেষ্টা করো।");
+    recognition.start();
+  });
+
+  document.getElementById("stopVoiceButton").addEventListener("click", () => {
+    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+  });
+
+  // স্থানীয় স্মরণিকা: এই ডিভাইস/ব্রাউজারেই সংরক্ষিত হয়
+  const REMINDER_KEY = "amar_assistant_reminders";
+  let reminders = JSON.parse(localStorage.getItem(REMINDER_KEY) || "[]");
+
+  function saveReminders() {
+    localStorage.setItem(REMINDER_KEY, JSON.stringify(reminders));
+  }
+
+  function renderReminders() {
+    const box = document.getElementById("reminders");
+    box.innerHTML = "";
+
+    reminders.forEach((reminder, index) => {
+      const item = document.createElement("div");
+      item.className = "reminder";
+
+      const date = new Date(reminder.time);
+      item.textContent = reminder.text + " — " + date.toLocaleString("bn-BD");
+
+      const remove = document.createElement("button");
+      remove.textContent = "মুছুন";
+      remove.className = "secondary";
+      remove.addEventListener("click", () => {
+        reminders.splice(index, 1);
+        saveReminders();
+        renderReminders();
+      });
+
+      item.appendChild(remove);
+      box.appendChild(item);
+    });
+  }
+
+  document.getElementById("addReminder").addEventListener("click", async () => {
+    const text = document.getElementById("reminderText").value.trim();
+    const time = document.getElementById("reminderTime").value;
+
+    if (!text || !time) {
+      alert("স্মরণিকার বিষয় ও সময় দাও।");
+      return;
+    }
+
+    const timestamp = new Date(time).getTime();
+    if (timestamp <= Date.now()) {
+      alert("ভবিষ্যতের সময় নির্বাচন করো।");
+      return;
+    }
+
+    reminders.push({ text, time, notified: false });
+    saveReminders();
+    renderReminders();
+
+    if ("Notification" in window && Notification.permission === "default") {
+      await Notification.requestPermission();
+    }
+
+    document.getElementById("reminderText").value = "";
+    document.getElementById("reminderTime").value = "";
+  });
+
+  function checkReminders() {
+    const now = Date.now();
+    let changed = false;
+
+    reminders.forEach(reminder => {
+      if (!reminder.notified && new Date(reminder.time).getTime() <= now) {
+        reminder.notified = true;
+        changed = true;
+
+        if ("Notification" in window && Notification.permission === "granted") {
+          new Notification("Amar Assistant", { body: reminder.text });
+        } else {
+          alert("স্মরণিকা: " + reminder.text);
+        }
+      }
+    });
+
+    if (changed) saveReminders();
+  }
+
+  renderReminders();
+  setInterval(checkReminders, 15000);
+</script>
+</body>
+</html>
